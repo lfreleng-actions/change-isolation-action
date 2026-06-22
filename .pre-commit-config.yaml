@@ -55,15 +55,20 @@ repos:
     rev: 3b3f7c3f57fe9925356faf5fe6230835138be230  # frozen: v0.15.17
     hooks:
       - id: ruff
-        files: ^(scripts|tests|custom_components)/.+\.py$
+        files: ^(change_isolation\.py|(scripts|tests|custom_components)/.*\.py)$
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
-        files: ^(scripts|tests|custom_components)/.+\.py$
+        files: ^(change_isolation\.py|(scripts|tests|custom_components)/.*\.py)$
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: d2823d321df3af8f878f7ee3414dc94d037145b9  # frozen: v2.1.0
     hooks:
       - id: mypy
+        # pre-commit.ci runs hooks in an isolated env without the
+        # project's runtime deps; declare them so imports resolve.
+        additional_dependencies:
+          - "pathspec>=0.12"
+          - "pytest>=8"
 
   - repo: https://github.com/btford/write-good
     rev: ab66ce10136dfad5146e69e70f82a3efac8842c1 # frozen: v1.0.8
