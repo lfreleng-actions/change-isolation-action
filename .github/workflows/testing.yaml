@@ -1,6 +1,6 @@
 ---
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: 2025 The Linux Foundation
+# SPDX-FileCopyrightText: 2026 The Linux Foundation
 
 # Action test/validation workflow
 name: "Test GitHub Action 🧪"
@@ -20,23 +20,18 @@ concurrency:
 permissions: {}
 
 jobs:
-  ### Test the GitHub Action in this Repository ###
-  tests:
-    name: "Test local GitHub Action"
+  ### Unit tests for the matching/IO logic ###
+  python-tests:
+    name: "Python unit tests"
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    timeout-minutes: 10 # Increase this timeout value as needed
+    timeout-minutes: 10
     steps:
-      # Load the egress allow-list out-of-band from the
-      # organisation's .github repository and publish it as
-      # $CONNECTION_ALLOW_LIST for the harden-runner step below.
       # yamllint disable-line rule:line-length
       - uses: lfreleng-actions/harden-runner-block-action@42663a22f7abe31521cbc6120901353a4b2849bc  # v0.2.0
         with:
-          config: '@18d9c4446bea555d0783e850f6d295f844fe8f67'  # v0.1.1
-
-      # Harden the runner with the just-loaded allow-list.
+          config: '@ad6501e25f5a30746ad50a77c663115ddc94dc62'  # v0.3.0
       - name: 'Harden runner (block)'
         # yamllint disable-line rule:line-length
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
@@ -44,45 +39,281 @@ jobs:
           egress-policy: 'block'
           allowed-endpoints: >
             ${{ env.CONNECTION_ALLOW_LIST }}
-
       - name: "Checkout repository"
+        # yamllint disable-line rule:line-length
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
-
-      # Perform setup prior to running test(s)
-      - name: "Testing setup step"
-        shell: bash
-        run: |
-          # Testing setup step
-          echo "Testing setup step"
-          echo "Testing setup step/summary output" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: "Running local action: ${{ github.repository }}"
-        uses: ./
+      - name: "Install uv"
+        # yamllint disable-line rule:line-length
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
-          input: "test input 💬"
-
-      - name: "Validated local action: ${{ github.repository }}"
+          version: "0.11.23"
+      - name: "Run pytest"
         shell: bash
         run: |
-          # Local action validation
-          echo "Validated local action: ${{ github.repository }}"
-          echo "Validation step summary output" >> "$GITHUB_STEP_SUMMARY"
+          # Run the unit test suite
+          uv run --locked pytest -q
 
+  ### End-to-end integration of the real isolation requirements ###
+  # These scenarios pin the production call sites (/INFO.yaml and
+  # .github/**) against the local action so future changes cannot
+  # silently regress the enforced behaviour.
+  integration:
+    name: "Integration: real isolation requirements"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
       # yamllint disable-line rule:line-length
-      - name: "Running local action: ${{ github.repository }} [Override Failure]"
-        uses: ./
-        id: failure
-        continue-on-error: true
+      - uses: lfreleng-actions/harden-runner-block-action@42663a22f7abe31521cbc6120901353a4b2849bc  # v0.2.0
         with:
-          invalid_input: "Some garbage"
-
-      # Failure testing is also important
-      - name: "Error if step above did NOT fail"
-        if: steps.failure.outcome == 'success'
+          config: '@ad6501e25f5a30746ad50a77c663115ddc94dc62'  # v0.3.0
+      - name: 'Harden runner (block)'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: 'block'
+          allowed-endpoints: >
+            ${{ env.CONNECTION_ALLOW_LIST }}
+      - name: "Checkout repository"
+        # yamllint disable-line rule:line-length
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: "Configure git identity"
         shell: bash
         run: |
-          # Error if step above did NOT fail
-          echo "Error: previous test step did NOT fail ❌"
-          exit 1
+          # Identity for the transient scenario commits below
+          git config user.email "ci@example.com"
+          git config user.name "CI"
+
+      # ----------------------------------------------------------------
+      # Scenario 1: an isolated INFO.yaml change passes
+      # ----------------------------------------------------------------
+      - name: "Scenario 1 setup: isolated INFO.yaml change"
+        shell: bash
+        run: |
+          # Tip commit touches only the top-level INFO.yaml
+          printf 'project: scenario\n' > INFO.yaml
+          git add INFO.yaml
+          git commit -q -m "scenario: isolated INFO.yaml"
+      - name: "Scenario 1: INFO.yaml isolation passes"
+        id: s1
+        uses: ./
+        with:
+          paths: "/INFO.yaml"
+      - name: "Scenario 1 assert"
+        shell: bash
+        env:
+          ISOLATED: ${{ steps.s1.outputs.isolated }}
+          SCANNED: ${{ steps.s1.outputs.scanned }}
+        run: |
+          # Expect an in-scope, isolated change
+          if [[ "$ISOLATED" != "true" || "$SCANNED" != "true" ]]; then
+            echo "Error: expected isolated=true scanned=true ❌"
+            exit 1
+          fi
+          echo "Isolated INFO.yaml change accepted ✅"
+
+      # ----------------------------------------------------------------
+      # Scenario 2: INFO.yaml combined with code fails
+      # ----------------------------------------------------------------
+      - name: "Scenario 2 setup: INFO.yaml combined with code"
+        shell: bash
+        run: |
+          # Tip commit touches INFO.yaml plus an out-of-scope source file
+          printf 'project: scenario2\n' > INFO.yaml
+          mkdir -p src
+          printf 'print("hi")\n' > src/app.py
+          git add INFO.yaml src/app.py
+          git commit -q -m "scenario: INFO.yaml + code"
+      - name: "Scenario 2: combined INFO.yaml change fails"
+        id: s2
+        continue-on-error: true
+        uses: ./
+        with:
+          paths: "/INFO.yaml"
+      - name: "Scenario 2 assert"
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.s2.outcome }}
+          VIOLATING: ${{ steps.s2.outputs.violating-files }}
+        run: |
+          # Expect a hard failure naming the out-of-scope file
+          if [[ "$OUTCOME" != "failure" ]]; then
+            echo "Error: expected isolation failure ❌"
+            exit 1
+          fi
+          if [[ "$VIOLATING" != *"src/app.py"* ]]; then
+            echo "Error: expected src/app.py in violating-files ❌"
+            exit 1
+          fi
+          echo "Combined INFO.yaml change rejected ✅"
+
+      # ----------------------------------------------------------------
+      # Scenario 3: an isolated .github subtree change passes
+      # ----------------------------------------------------------------
+      - name: "Scenario 3 setup: isolated .github change"
+        shell: bash
+        run: |
+          # Tip commit touches multiple files under .github only
+          mkdir -p .github
+          printf 'a\n' > .github/scratch-a.yml
+          printf 'b\n' > .github/scratch-b.yml
+          git add .github/scratch-a.yml .github/scratch-b.yml
+          git commit -q -m "scenario: isolated .github"
+      - name: "Scenario 3: .github isolation passes"
+        id: s3
+        uses: ./
+        with:
+          paths: ".github/**"
+      - name: "Scenario 3 assert"
+        shell: bash
+        env:
+          ISOLATED: ${{ steps.s3.outputs.isolated }}
+          SCANNED: ${{ steps.s3.outputs.scanned }}
+        run: |
+          # Expect an in-scope, isolated change
+          if [[ "$ISOLATED" != "true" || "$SCANNED" != "true" ]]; then
+            echo "Error: expected isolated=true scanned=true ❌"
+            exit 1
+          fi
+          echo "Isolated .github change accepted ✅"
+
+      # ----------------------------------------------------------------
+      # Scenario 4: .github combined with docs fails
+      # ----------------------------------------------------------------
+      - name: "Scenario 4 setup: .github combined with docs"
+        shell: bash
+        run: |
+          # Tip commit touches .github plus an out-of-scope docs file
+          printf 'c\n' > .github/scratch-c.yml
+          mkdir -p docs
+          printf '# page\n' > docs/page.md
+          git add .github/scratch-c.yml docs/page.md
+          git commit -q -m "scenario: .github + docs"
+      - name: "Scenario 4: combined .github change fails"
+        id: s4
+        continue-on-error: true
+        uses: ./
+        with:
+          paths: ".github/**"
+      - name: "Scenario 4 assert"
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.s4.outcome }}
+          VIOLATING: ${{ steps.s4.outputs.violating-files }}
+        run: |
+          # Expect a hard failure naming the out-of-scope file
+          if [[ "$OUTCOME" != "failure" ]]; then
+            echo "Error: expected isolation failure ❌"
+            exit 1
+          fi
+          if [[ "$VIOLATING" != *"docs/page.md"* ]]; then
+            echo "Error: expected docs/page.md in violating-files ❌"
+            exit 1
+          fi
+          echo "Combined .github change rejected ✅"
+
+      # ----------------------------------------------------------------
+      # Scenario 5: INFO.yaml and .github are mutually exclusive
+      # ----------------------------------------------------------------
+      - name: "Scenario 5 setup: INFO.yaml + .github together"
+        shell: bash
+        run: |
+          # Tip commit touches both protected scopes at once
+          printf 'project: scenario5\n' > INFO.yaml
+          printf 'd\n' > .github/scratch-d.yml
+          git add INFO.yaml .github/scratch-d.yml
+          git commit -q -m "scenario: INFO.yaml + .github"
+      - name: "Scenario 5a: INFO.yaml check fails"
+        id: s5a
+        continue-on-error: true
+        uses: ./
+        with:
+          paths: "/INFO.yaml"
+      - name: "Scenario 5b: .github check fails"
+        id: s5b
+        continue-on-error: true
+        uses: ./
+        with:
+          paths: ".github/**"
+      - name: "Scenario 5 assert"
+        shell: bash
+        env:
+          OUTCOME_A: ${{ steps.s5a.outcome }}
+          OUTCOME_B: ${{ steps.s5b.outcome }}
+        run: |
+          # Both independent checks must reject the combined change
+          if [[ "$OUTCOME_A" != "failure" || "$OUTCOME_B" != "failure" ]]; then
+            echo "Error: INFO.yaml and .github changes must not combine ❌"
+            exit 1
+          fi
+          echo "INFO.yaml and .github are mutually exclusive ✅"
+
+      # ----------------------------------------------------------------
+      # Scenario 6: anchoring - a nested INFO.yaml is out of scope
+      # ----------------------------------------------------------------
+      - name: "Scenario 6 setup: nested INFO.yaml only"
+        shell: bash
+        run: |
+          # Tip commit touches a nested INFO.yaml, not the root one
+          mkdir -p nested
+          printf 'project: nested\n' > nested/INFO.yaml
+          git add nested/INFO.yaml
+          git commit -q -m "scenario: nested INFO.yaml"
+      - name: "Scenario 6: anchored pattern is a no-op"
+        id: s6
+        uses: ./
+        with:
+          paths: "/INFO.yaml"
+      - name: "Scenario 6 assert"
+        shell: bash
+        env:
+          ISOLATED: ${{ steps.s6.outputs.isolated }}
+          SCANNED: ${{ steps.s6.outputs.scanned }}
+        run: |
+          # The root-anchored pattern must not match nested/INFO.yaml,
+          # so the check is a no-op pass (nothing in scope changed).
+          if [[ "$ISOLATED" != "true" || "$SCANNED" != "false" ]]; then
+            echo "Error: expected no-op pass (isolated=true scanned=false) ❌"
+            exit 1
+          fi
+          echo "Anchored /INFO.yaml ignores nested INFO.yaml ✅"
+
+      # ----------------------------------------------------------------
+      # Scenario 7: advisory mode reports without failing
+      # ----------------------------------------------------------------
+      - name: "Scenario 7 setup: combined change for advisory mode"
+        shell: bash
+        run: |
+          # Reuse a combined INFO.yaml + code change
+          printf 'project: scenario7\n' > INFO.yaml
+          printf 'print("again")\n' > src/app.py
+          git add INFO.yaml src/app.py
+          git commit -q -m "scenario: advisory combined"
+      - name: "Scenario 7: advisory mode does not fail"
+        id: s7
+        uses: ./
+        with:
+          paths: "/INFO.yaml"
+          fail-on-violation: "false"
+      - name: "Scenario 7 assert"
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.s7.outcome }}
+          ISOLATED: ${{ steps.s7.outputs.isolated }}
+          VIOLATING: ${{ steps.s7.outputs.violating-files }}
+        run: |
+          # Advisory mode passes the step but still reports the violation
+          if [[ "$OUTCOME" != "success" ]]; then
+            echo "Error: advisory mode should not fail the step ❌"
+            exit 1
+          fi
+          if [[ "$ISOLATED" != "false" || "$VIOLATING" != *"app.py"* ]]; then
+            echo "Error: advisory mode should report the violation ❌"
+            exit 1
+          fi
+          echo "Advisory mode reported violation without failing ✅"
