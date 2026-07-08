@@ -108,11 +108,17 @@ jobs:
         shell: bash
         env:
           ISOLATED: ${{ steps.s1.outputs.isolated }}
+          TRIGGERED: ${{ steps.s1.outputs.triggered }}
           SCANNED: ${{ steps.s1.outputs.scanned }}
         run: |
           # Expect an in-scope, isolated change
-          if [[ "$ISOLATED" != "true" || "$SCANNED" != "true" ]]; then
-            echo "Error: expected isolated=true scanned=true ❌"
+          if [[ "$ISOLATED" != "true" || "$TRIGGERED" != "true" ]]; then
+            echo "Error: expected isolated=true triggered=true ❌"
+            exit 1
+          fi
+          # The deprecated 'scanned' alias must mirror 'triggered'
+          if [[ "$SCANNED" != "$TRIGGERED" ]]; then
+            echo "Error: expected scanned alias to match triggered ❌"
             exit 1
           fi
           echo "Isolated INFO.yaml change accepted ✅"
@@ -173,11 +179,11 @@ jobs:
         shell: bash
         env:
           ISOLATED: ${{ steps.s3.outputs.isolated }}
-          SCANNED: ${{ steps.s3.outputs.scanned }}
+          TRIGGERED: ${{ steps.s3.outputs.triggered }}
         run: |
           # Expect an in-scope, isolated change
-          if [[ "$ISOLATED" != "true" || "$SCANNED" != "true" ]]; then
-            echo "Error: expected isolated=true scanned=true ❌"
+          if [[ "$ISOLATED" != "true" || "$TRIGGERED" != "true" ]]; then
+            echo "Error: expected isolated=true triggered=true ❌"
             exit 1
           fi
           echo "Isolated .github change accepted ✅"
@@ -273,12 +279,12 @@ jobs:
         shell: bash
         env:
           ISOLATED: ${{ steps.s6.outputs.isolated }}
-          SCANNED: ${{ steps.s6.outputs.scanned }}
+          TRIGGERED: ${{ steps.s6.outputs.triggered }}
         run: |
           # The root-anchored pattern must not match nested/INFO.yaml,
           # so the check is a no-op pass (nothing in scope changed).
-          if [[ "$ISOLATED" != "true" || "$SCANNED" != "false" ]]; then
-            echo "Error: expected no-op pass (isolated=true scanned=false) ❌"
+          if [[ "$ISOLATED" != "true" || "$TRIGGERED" != "false" ]]; then
+            echo "Error: expected no-op pass (isolated=true triggered=false) ❌"
             exit 1
           fi
           echo "Anchored /INFO.yaml ignores nested INFO.yaml ✅"

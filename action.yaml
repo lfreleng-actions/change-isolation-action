@@ -36,10 +36,14 @@ outputs:
   isolated:
     description: "'true' if the change is isolated, otherwise 'false'."
     value: ${{ steps.check.outputs.isolated }}
-  scanned:
+  triggered:
     description: >
       'true' if at least one changed file matched the in-scope patterns,
       otherwise 'false' (the no-op case).
+    value: ${{ steps.check.outputs.triggered }}
+  scanned:
+    description: >
+      Deprecated alias for 'triggered'; use 'triggered' instead.
     value: ${{ steps.check.outputs.scanned }}
   violating-files:
     description: >
