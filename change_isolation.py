@@ -11,7 +11,8 @@ The script computes the set of files changed between a base reference and
 ``HEAD`` and checks them against a list of gitignore-style patterns (the
 "in-scope" paths). A change is considered *isolated* when, if any changed
 file matches the in-scope patterns, then *every* changed file matches them.
-If no changed file matches the patterns the check is a no-op and passes.
+If no changed file matches the patterns the check does not trigger and
+passes as a no-op.
 
 Pattern matching uses gitignore semantics (via ``pathspec``):
 
@@ -30,6 +31,7 @@ convention) and results are written to the console, ``GITHUB_OUTPUT``,
 from __future__ import annotations
 
 import os
+import re
 import secrets
 import subprocess  # nosec B404 - git invocation with fixed, non-shell argv
 import sys
@@ -49,7 +51,7 @@ class IsolationError(RuntimeError):
 class Result:
     """Outcome of an isolation evaluation."""
 
-    scanned: bool
+    triggered: bool
     isolated: bool
     matched: List[str] = field(default_factory=list)
     violating: List[str] = field(default_factory=list)
@@ -89,13 +91,13 @@ def classify(changed_files: Sequence[str], spec: "PathSpec[Any]") -> Result:
     violating: List[str] = []
     for path in changed_files:
         (matched if spec.match_file(path) else violating).append(path)
-    scanned = bool(matched)
-    isolated = (not scanned) or (not violating)
+    triggered = bool(matched)
+    isolated = (not triggered) or (not violating)
     return Result(
-        scanned=scanned,
+        triggered=triggered,
         isolated=isolated,
         matched=matched,
-        violating=violating if scanned else [],
+        violating=violating if triggered else [],
     )
 
 
@@ -184,7 +186,9 @@ def write_outputs(result: Result) -> None:
     delimiter = f"ghadelim_change_isolation_{secrets.token_hex(16)}"
     lines = [
         f"isolated={str(result.isolated).lower()}\n",
-        f"scanned={str(result.scanned).lower()}\n",
+        f"triggered={str(result.triggered).lower()}\n",
+        # Deprecated alias for 'triggered', kept for existing consumers.
+        f"scanned={str(result.triggered).lower()}\n",
         f"violating-files<<{delimiter}\n",
         ("\n".join(result.violating) + "\n") if result.violating else "",
         f"{delimiter}\n",
@@ -192,9 +196,44 @@ def write_outputs(result: Result) -> None:
     _append_to_env_file("GITHUB_OUTPUT", "".join(lines))
 
 
+def _escape_table_cell(value: str) -> str:
+    """Escape characters that would break a markdown table cell.
+
+    GFM tables treat ``\\|`` as an escaped pipe *even inside code spans*:
+    the table parser consumes the escape while splitting cells, before
+    inline parsing, so ``\\|`` renders as a literal ``|`` in the cell (see
+    the 'Tables (extension)' section of the GFM spec). Raw HTML ``<code>``
+    is deliberately avoided because markdown inline parsing still applies
+    inside inline HTML, where glob characters such as ``**`` could pair
+    up as emphasis across adjacent cell values.
+    """
+    return value.replace("|", "\\|")
+
+
+def _code_span(value: str) -> str:
+    """Wrap a value in a CommonMark code span safe for embedded backticks.
+
+    The delimiter uses one more backtick than the longest backtick run in
+    the value, and the content gets space padding when it starts or ends
+    with a backtick, so arbitrary values cannot terminate the span early.
+    """
+    longest = max((len(run) for run in re.findall(r"`+", value)), default=0)
+    fence = "`" * (longest + 1)
+    pad = " " if value.startswith("`") or value.endswith("`") else ""
+    return f"{fence}{pad}{value}{pad}{fence}"
+
+
 def render_summary(result: Result, patterns: Sequence[str]) -> str:
     """Build a human-readable markdown summary block."""
-    status = "✅ Isolated" if result.isolated else "❌ Not isolated"
+    if not result.isolated:
+        status = "❌ Not isolated"
+    elif result.triggered:
+        status = "✅ Isolated"
+    else:
+        status = "✅ Isolated (no in-scope files changed; no-op)"
+    patterns_cell = "<br>".join(
+        _code_span(_escape_table_cell(pattern)) for pattern in patterns
+    )
     rows = [
         "## 🔒 Change Isolation",
         "",
@@ -202,16 +241,16 @@ def render_summary(result: Result, patterns: Sequence[str]) -> str:
         "",
         "| Property | Value |",
         "| --- | --- |",
-        f"| In-scope patterns | {len(patterns)} |",
+        f"| In-scope patterns | {patterns_cell} |",
         f"| In-scope files changed | {len(result.matched)} |",
         f"| Out-of-scope files changed | {len(result.violating)} |",
-        f"| Scanned | {str(result.scanned).lower()} |",
+        f"| Triggered | {str(result.triggered).lower()} |",
         "",
     ]
     if result.violating:
         rows.append("### Out-of-scope files (break isolation)")
         rows.append("")
-        rows.extend(f"- `{path}`" for path in result.violating)
+        rows.extend(f"- {_code_span(path)}" for path in result.violating)
         rows.append("")
     return "\n".join(rows) + "\n"
 
@@ -230,7 +269,7 @@ def emit(result: Result, patterns: Sequence[str], *, fail_on_violation: bool) ->
     write_outputs(result)
 
     if result.isolated:
-        if result.scanned:
+        if result.triggered:
             print("Result: isolated ✅ (all changed files are in scope)")
         else:
             print("Result: isolated ✅ (no in-scope files changed; no-op)")

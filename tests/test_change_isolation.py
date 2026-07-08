@@ -30,14 +30,14 @@ def classify(files, patterns):
 
 def test_no_in_scope_files_is_noop_pass():
     result = classify(["README.md", "src/app.py"], ["/INFO.yaml"])
-    assert result.scanned is False
+    assert result.triggered is False
     assert result.isolated is True
     assert result.violating == []
 
 
 def test_only_in_scope_file_passes():
     result = classify(["INFO.yaml"], ["/INFO.yaml"])
-    assert result.scanned is True
+    assert result.triggered is True
     assert result.isolated is True
     assert result.matched == ["INFO.yaml"]
     assert result.violating == []
@@ -45,7 +45,7 @@ def test_only_in_scope_file_passes():
 
 def test_in_scope_combined_with_out_of_scope_fails():
     result = classify(["INFO.yaml", "README.md"], ["/INFO.yaml"])
-    assert result.scanned is True
+    assert result.triggered is True
     assert result.isolated is False
     assert result.matched == ["INFO.yaml"]
     assert result.violating == ["README.md"]
@@ -54,13 +54,13 @@ def test_in_scope_combined_with_out_of_scope_fails():
 def test_anchored_pattern_only_matches_root():
     # A leading slash anchors to the repository root.
     result = classify(["src/INFO.yaml"], ["/INFO.yaml"])
-    assert result.scanned is False
+    assert result.triggered is False
     assert result.isolated is True
 
 
 def test_bare_pattern_matches_any_depth():
     result = classify(["src/INFO.yaml"], ["INFO.yaml"])
-    assert result.scanned is True
+    assert result.triggered is True
     assert result.matched == ["src/INFO.yaml"]
 
 
@@ -96,7 +96,7 @@ def test_negation_excludes_path():
 
 def test_empty_change_is_noop():
     result = classify([], ["/INFO.yaml"])
-    assert result.scanned is False
+    assert result.triggered is False
     assert result.isolated is True
 
 
@@ -124,11 +124,14 @@ def test_write_outputs_multiline_violations(tmp_path, monkeypatch):
     out = tmp_path / "out"
     monkeypatch.setenv("GITHUB_OUTPUT", str(out))
     result = ci.Result(
-        scanned=True, isolated=False, matched=["INFO.yaml"], violating=["a", "b"]
+        triggered=True, isolated=False, matched=["INFO.yaml"], violating=["a", "b"]
     )
     ci.write_outputs(result)
     content = out.read_text(encoding="utf-8")
     assert "isolated=false\n" in content
+    assert "triggered=true\n" in content
+    # 'scanned' is a deprecated alias for 'triggered' kept for existing
+    # consumers of the action's outputs.
     assert "scanned=true\n" in content
     # The heredoc delimiter is randomised per run to prevent output
     # injection, so assert its structure rather than a fixed value.
@@ -140,16 +143,59 @@ def test_write_outputs_multiline_violations(tmp_path, monkeypatch):
 
 def test_render_summary_lists_violations():
     result = ci.Result(
-        scanned=True, isolated=False, matched=["INFO.yaml"], violating=["README.md"]
+        triggered=True, isolated=False, matched=["INFO.yaml"], violating=["README.md"]
     )
     summary = ci.render_summary(result, ["/INFO.yaml"])
     assert "Not isolated" in summary
     assert "`README.md`" in summary
 
 
+def test_render_summary_shows_patterns():
+    # The summary table must show the patterns themselves so that runs
+    # invoking the action multiple times remain distinguishable.
+    result = ci.Result(triggered=False, isolated=True)
+    summary = ci.render_summary(result, ["/INFO.yaml", ".github/**"])
+    assert "| In-scope patterns | `/INFO.yaml`<br>`.github/**` |" in summary
+
+
+def test_render_summary_labels_noop_pass():
+    result = ci.Result(triggered=False, isolated=True)
+    summary = ci.render_summary(result, ["/INFO.yaml"])
+    assert "✅ Isolated (no in-scope files changed; no-op)" in summary
+    assert "| Triggered | false |" in summary
+
+
+def test_render_summary_escapes_pipes_in_patterns():
+    # A pipe in a pattern must not break the markdown table structure.
+    result = ci.Result(triggered=False, isolated=True)
+    summary = ci.render_summary(result, ["weird|name"])
+    assert "`weird\\|name`" in summary
+
+
+def test_code_span_handles_embedded_backticks():
+    # A backtick run in the value must not terminate the code span; the
+    # delimiter grows beyond the longest run and edge backticks get padded.
+    assert ci._code_span("plain") == "`plain`"
+    assert ci._code_span("a`b") == "``a`b``"
+    assert ci._code_span("a``b") == "```a``b```"
+    assert ci._code_span("`edge`") == "`` `edge` ``"
+
+
+def test_render_summary_survives_backticks_in_patterns_and_files():
+    result = ci.Result(
+        triggered=True,
+        isolated=False,
+        matched=["INFO.yaml"],
+        violating=["weird`file.txt"],
+    )
+    summary = ci.render_summary(result, ["pat`tern"])
+    assert "``pat`tern``" in summary
+    assert "- ``weird`file.txt``" in summary
+
+
 def test_emit_returns_failure_and_annotation(capsys):
     result = ci.Result(
-        scanned=True, isolated=False, matched=["INFO.yaml"], violating=["README.md"]
+        triggered=True, isolated=False, matched=["INFO.yaml"], violating=["README.md"]
     )
     code = ci.emit(result, ["/INFO.yaml"], fail_on_violation=True)
     captured = capsys.readouterr().out
@@ -159,7 +205,7 @@ def test_emit_returns_failure_and_annotation(capsys):
 
 def test_emit_warns_without_failing_when_disabled(capsys):
     result = ci.Result(
-        scanned=True, isolated=False, matched=["INFO.yaml"], violating=["README.md"]
+        triggered=True, isolated=False, matched=["INFO.yaml"], violating=["README.md"]
     )
     code = ci.emit(result, ["/INFO.yaml"], fail_on_violation=False)
     captured = capsys.readouterr().out
@@ -175,7 +221,7 @@ def test_escape_helpers_cover_command_metacharacters():
 def test_emit_escapes_annotation_special_chars(capsys):
     nasty = "a,b:c%d.txt"
     result = ci.Result(
-        scanned=True, isolated=False, matched=["INFO.yaml"], violating=[nasty]
+        triggered=True, isolated=False, matched=["INFO.yaml"], violating=[nasty]
     )
     ci.emit(result, ["/INFO.yaml"], fail_on_violation=True)
     captured = capsys.readouterr().out

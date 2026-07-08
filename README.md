@@ -86,7 +86,8 @@ Patterns use gitignore semantics (via
 | Name              | Description                                                        |
 | ----------------- | ------------------------------------------------------------------ |
 | `isolated`        | `true` when the change stays isolated, otherwise `false`.          |
-| `scanned`         | `true` if at least one changed file matched the in-scope patterns. |
+| `triggered`       | `true` if at least one changed file matched the in-scope patterns. |
+| `scanned`         | Deprecated alias for `triggered`; use `triggered` instead.         |
 | `violating-files` | Newline-separated list of out-of-scope files that break isolation. |
 
 <!-- markdownlint-enable MD013 -->
