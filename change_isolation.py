@@ -35,8 +35,9 @@ import re
 import secrets
 import subprocess  # nosec B404 - git invocation with fixed, non-shell argv
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, List, Sequence
+from typing import Any
 
 from pathspec import PathSpec
 
@@ -53,11 +54,11 @@ class Result:
 
     triggered: bool
     isolated: bool
-    matched: List[str] = field(default_factory=list)
-    violating: List[str] = field(default_factory=list)
+    matched: list[str] = field(default_factory=list)
+    violating: list[str] = field(default_factory=list)
 
 
-def parse_patterns(raw: str) -> List[str]:
+def parse_patterns(raw: str) -> list[str]:
     """Split the multiline ``paths`` input into individual pattern lines.
 
     Blank lines are dropped and surrounding whitespace is trimmed from each
@@ -68,7 +69,7 @@ def parse_patterns(raw: str) -> List[str]:
     return [line.strip() for line in raw.splitlines() if line.strip()]
 
 
-def build_spec(patterns: Sequence[str]) -> "PathSpec[Any]":
+def build_spec(patterns: Sequence[str]) -> PathSpec[Any]:
     """Compile gitignore-style patterns into a matcher.
 
     Prefer the modern ``gitignore`` factory and fall back to the older
@@ -81,14 +82,14 @@ def build_spec(patterns: Sequence[str]) -> "PathSpec[Any]":
         return PathSpec.from_lines("gitwildmatch", patterns)
 
 
-def classify(changed_files: Sequence[str], spec: "PathSpec[Any]") -> Result:
+def classify(changed_files: Sequence[str], spec: PathSpec[Any]) -> Result:
     """Partition changed files into in-scope and out-of-scope sets.
 
     The change is isolated when nothing in scope changed (no-op) or when
     every changed file is in scope.
     """
-    matched: List[str] = []
-    violating: List[str] = []
+    matched: list[str] = []
+    violating: list[str] = []
     for path in changed_files:
         (matched if spec.match_file(path) else violating).append(path)
     triggered = bool(matched)
@@ -101,7 +102,7 @@ def classify(changed_files: Sequence[str], spec: "PathSpec[Any]") -> Result:
     )
 
 
-def _run_git(args: Sequence[str]) -> "subprocess.CompletedProcess[str]":
+def _run_git(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
     """Run a git command, capturing output, without using a shell."""
     return subprocess.run(  # nosec B603 - fixed argv, no shell, trusted binary
         ["git", *args],
@@ -135,7 +136,7 @@ def validate_base_ref(base_ref: str) -> None:
         )
 
 
-def get_changed_files(base_ref: str) -> List[str]:
+def get_changed_files(base_ref: str) -> list[str]:
     """Return the files changed between ``base_ref`` and ``HEAD``.
 
     Uses a three-dot (merge-base) diff so that, when ``base-ref`` is a branch
