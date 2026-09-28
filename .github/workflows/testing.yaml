@@ -101,7 +101,7 @@ jobs:
           git commit -q -m "scenario: isolated INFO.yaml"
       - name: "Scenario 1: INFO.yaml isolation passes"
         id: s1
-        uses: ./
+        uses: $/
         with:
           paths: "/INFO.yaml"
       - name: "Scenario 1 assert"
@@ -138,7 +138,7 @@ jobs:
       - name: "Scenario 2: combined INFO.yaml change fails"
         id: s2
         continue-on-error: true
-        uses: ./
+        uses: $/
         with:
           paths: "/INFO.yaml"
       - name: "Scenario 2 assert"
@@ -172,7 +172,7 @@ jobs:
           git commit -q -m "scenario: isolated .github"
       - name: "Scenario 3: .github isolation passes"
         id: s3
-        uses: ./
+        uses: $/
         with:
           paths: ".github/**"
       - name: "Scenario 3 assert"
@@ -203,7 +203,7 @@ jobs:
       - name: "Scenario 4: combined .github change fails"
         id: s4
         continue-on-error: true
-        uses: ./
+        uses: $/
         with:
           paths: ".github/**"
       - name: "Scenario 4 assert"
@@ -237,13 +237,13 @@ jobs:
       - name: "Scenario 5a: INFO.yaml check fails"
         id: s5a
         continue-on-error: true
-        uses: ./
+        uses: $/
         with:
           paths: "/INFO.yaml"
       - name: "Scenario 5b: .github check fails"
         id: s5b
         continue-on-error: true
-        uses: ./
+        uses: $/
         with:
           paths: ".github/**"
       - name: "Scenario 5 assert"
@@ -272,7 +272,7 @@ jobs:
           git commit -q -m "scenario: nested INFO.yaml"
       - name: "Scenario 6: anchored pattern is a no-op"
         id: s6
-        uses: ./
+        uses: $/
         with:
           paths: "/INFO.yaml"
       - name: "Scenario 6 assert"
@@ -302,7 +302,7 @@ jobs:
           git commit -q -m "scenario: advisory combined"
       - name: "Scenario 7: advisory mode does not fail"
         id: s7
-        uses: ./
+        uses: $/
         with:
           paths: "/INFO.yaml"
           fail-on-violation: "false"
