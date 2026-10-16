@@ -280,11 +280,17 @@ jobs:
         env:
           ISOLATED: ${{ steps.s6.outputs.isolated }}
           TRIGGERED: ${{ steps.s6.outputs.triggered }}
+          CHANGED: ${{ steps.s6.outputs.changed-files }}
         run: |
           # The root-anchored pattern must not match nested/INFO.yaml,
           # so the check is a no-op pass (nothing in scope changed).
           if [[ "$ISOLATED" != "true" || "$TRIGGERED" != "false" ]]; then
             echo "Error: expected no-op pass (isolated=true triggered=false) ❌"
+            exit 1
+          fi
+          # The evaluated list is published on the no-op path too
+          if [[ "$CHANGED" != "nested/INFO.yaml" ]]; then
+            echo "Error: expected changed-files=nested/INFO.yaml ❌"
             exit 1
           fi
           echo "Anchored /INFO.yaml ignores nested INFO.yaml ✅"
@@ -323,3 +329,143 @@ jobs:
             exit 1
           fi
           echo "Advisory mode reported violation without failing ✅"
+
+  ### The changed-files input in a job with no checkout ###
+  # '$/' loads the action without a checkout, so the workspace holds no
+  # Git repository; a git shim on PATH records any call the action makes.
+  no-checkout:
+    name: "Integration: changed-files without a checkout"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      # yamllint disable-line rule:line-length
+      - uses: lfreleng-actions/harden-runner-block-action@a32eb064a1188f6b0f15d2c0c0381efe54b0dd22  # v0.12.2
+        with:
+          config: '@ad6501e25f5a30746ad50a77c663115ddc94dc62'  # v0.3.0
+      - name: 'Harden runner (block)'
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed  # v2.22.0
+        with:
+          egress-policy: 'block'
+          allowed-endpoints: >
+            ${{ env.CONNECTION_ALLOW_LIST }}
+      - name: "Record git calls"
+        shell: bash
+        run: |
+          # Confirm there is no work tree, then wrap git so calls are logged
+          if git -C "$GITHUB_WORKSPACE" rev-parse --is-inside-work-tree \
+            >/dev/null 2>&1; then
+            echo "Error: the workspace is a Git work tree ❌"
+            exit 1
+          fi
+          shim_dir="$RUNNER_TEMP/git-shim"
+          mkdir -p "$shim_dir"
+          cat > "$shim_dir/git" <<'EOF'
+          #!/usr/bin/env bash
+          printf '%s\n' "$*" >> "$GIT_SHIM_LOG"
+          exec "$GIT_SHIM_REAL" "$@"
+          EOF
+          chmod +x "$shim_dir/git"
+          : > "$RUNNER_TEMP/git-calls.log"
+          {
+            echo "GIT_SHIM_REAL=$(command -v git)"
+            echo "GIT_SHIM_LOG=$RUNNER_TEMP/git-calls.log"
+          } >> "$GITHUB_ENV"
+          echo "$shim_dir" >> "$GITHUB_PATH"
+
+      # ----------------------------------------------------------------
+      # Scenario N1: a combined list fails; base-ref is ignored
+      # ----------------------------------------------------------------
+      - name: "Scenario N1: combined list fails without git"
+        id: n1
+        continue-on-error: true
+        uses: $/
+        with:
+          paths: "/INFO.yaml"
+          base-ref: "does-not-exist"
+          changed-files: |
+            INFO.yaml
+            src/app.py
+      - name: "Scenario N1 assert"
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.n1.outcome }}
+          VIOLATING: ${{ steps.n1.outputs.violating-files }}
+          CHANGED: ${{ steps.n1.outputs.changed-files }}
+        run: |
+          # Expect a failure naming the out-of-scope file from the list
+          if [[ "$OUTCOME" != "failure" || "$VIOLATING" != "src/app.py" ]]; then
+            echo "Error: expected failure naming src/app.py ❌"
+            exit 1
+          fi
+          if [[ "$CHANGED" != $'INFO.yaml\nsrc/app.py' ]]; then
+            echo "Error: changed-files output does not match the input ❌"
+            exit 1
+          fi
+          echo "Combined list rejected without git ✅"
+
+      # ----------------------------------------------------------------
+      # Scenario N2: an isolated list passes; whitespace is trimmed
+      # ----------------------------------------------------------------
+      - name: "Scenario N2: isolated list passes without git"
+        id: n2
+        uses: $/
+        with:
+          paths: ".github/**"
+          # Leading and trailing spaces and a blank line, all to be trimmed
+          changed-files: "  .github/workflows/ci.yaml\n\n\
+            .github/dependabot.yml  \n"
+      - name: "Scenario N2 assert"
+        shell: bash
+        env:
+          ISOLATED: ${{ steps.n2.outputs.isolated }}
+          TRIGGERED: ${{ steps.n2.outputs.triggered }}
+          CHANGED: ${{ steps.n2.outputs.changed-files }}
+        run: |
+          # Expect an in-scope, isolated change and a trimmed list
+          if [[ "$ISOLATED" != "true" || "$TRIGGERED" != "true" ]]; then
+            echo "Error: expected isolated=true triggered=true ❌"
+            exit 1
+          fi
+          expected=$'.github/workflows/ci.yaml\n.github/dependabot.yml'
+          if [[ "$CHANGED" != "$expected" ]]; then
+            echo "Error: changed-files output was not trimmed ❌"
+            exit 1
+          fi
+          echo "Isolated list accepted without git ✅"
+
+      # ----------------------------------------------------------------
+      # Scenario N3: a control character in the list is refused
+      # ----------------------------------------------------------------
+      - name: "Scenario N3: control character refused"
+        id: n3
+        continue-on-error: true
+        uses: $/
+        with:
+          paths: "/INFO.yaml"
+          changed-files: "INFO.yaml\nbad\tname.txt"
+      - name: "Scenario N3 assert"
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.n3.outcome }}
+          ISOLATED: ${{ steps.n3.outputs.isolated }}
+        run: |
+          # Expect a failure before any result is published
+          if [[ "$OUTCOME" != "failure" || -n "$ISOLATED" ]]; then
+            echo "Error: expected the control character to be refused ❌"
+            exit 1
+          fi
+          echo "Control character refused ✅"
+
+      - name: "Assert the action ran no git command"
+        shell: bash
+        run: |
+          # The shim logs every git invocation made since it was installed
+          if [[ -s "$GIT_SHIM_LOG" ]]; then
+            echo "Error: the action ran git with changed-files set ❌"
+            cat "$GIT_SHIM_LOG"
+            exit 1
+          fi
+          echo "No git command ran ✅"
