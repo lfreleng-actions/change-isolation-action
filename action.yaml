@@ -21,9 +21,21 @@ inputs:
       Git reference to diff HEAD against. Defaults to 'HEAD~1' (the parent of
       a single-commit change). Supply a branch such as 'origin/main' for
       pull-request style comparisons. The reference must exist in local
-      history; increase the checkout fetch-depth if it does not.
+      history; increase the checkout fetch-depth if it does not. Unused when
+      'changed-files' is non-empty.
     required: false
     default: "HEAD~1"
+  changed-files:
+    description: >
+      Newline-separated list of repository-relative paths to evaluate instead
+      of asking git. When non-empty, the action runs no git command at all,
+      needs no checkout and ignores 'base-ref'. Surrounding whitespace and
+      blank lines are dropped; entries are otherwise taken as-is, and an
+      entry containing a control character fails the step. When empty (the
+      default) the list comes from git, so an empty change cannot be passed
+      here.
+    required: false
+    default: ""
   fail-on-violation:
     description: >
       When 'true' (default), exit with a non-zero status if isolation is
@@ -49,6 +61,11 @@ outputs:
     description: >
       Newline-separated list of out-of-scope files that break isolation.
     value: ${{ steps.check.outputs.violating-files }}
+  changed-files:
+    description: >
+      Newline-separated list of the changed files the action evaluated, from
+      the 'changed-files' input or from git.
+    value: ${{ steps.check.outputs.changed-files }}
 
 runs:
   using: "composite"
@@ -64,6 +81,7 @@ runs:
       env:
         INPUT_PATHS: ${{ inputs.paths }}
         INPUT_BASE_REF: ${{ inputs.base-ref }}
+        INPUT_CHANGED_FILES: ${{ inputs.changed-files }}
         INPUT_FAIL_ON_VIOLATION: ${{ inputs.fail-on-violation }}
         ACTION_PATH: ${{ github.action_path }}
       run: |
