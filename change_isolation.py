@@ -7,8 +7,9 @@
 
 """Verify that a change isolates modifications to a set of paths.
 
-The script computes the set of files changed between a base reference and
-``HEAD`` and checks them against a list of gitignore-style patterns (the
+The script takes the set of changed files, either from the
+``changed-files`` input or by diffing a base reference against ``HEAD``,
+and checks them against a list of gitignore-style patterns (the
 "in-scope" paths). A change is considered *isolated* when, if any changed
 file matches the in-scope patterns, then *every* changed file matches them.
 If no changed file matches the patterns the check does not trigger and
@@ -43,6 +44,10 @@ from pathspec import PathSpec
 
 DEFAULT_BASE_REF = "HEAD~1"
 
+# C0 controls, DEL and C1 controls; none belongs in a repository path that
+# is safe to echo into logs, annotations and step outputs.
+_CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
 
 class IsolationError(RuntimeError):
     """Raised for unrecoverable, user-actionable configuration problems."""
@@ -54,6 +59,7 @@ class Result:
 
     triggered: bool
     isolated: bool
+    changed: list[str] = field(default_factory=list)
     matched: list[str] = field(default_factory=list)
     violating: list[str] = field(default_factory=list)
 
@@ -67,6 +73,28 @@ def parse_patterns(raw: str) -> list[str]:
     comment (``#``) and negation (``!``) handling is left to ``pathspec``.
     """
     return [line.strip() for line in raw.splitlines() if line.strip()]
+
+
+def parse_changed_files(raw: str) -> list[str]:
+    """Split the multiline ``changed-files`` input into repository paths.
+
+    Lines are split on ``\\n`` only, surrounding whitespace is trimmed and
+    blank lines are dropped. Entries are otherwise taken as-is, matching
+    what ``git diff --name-only`` emits. An entry that still contains a
+    control character is refused rather than echoed into logs or outputs.
+    """
+    entries: list[str] = []
+    for number, line in enumerate(raw.split("\n"), start=1):
+        entry = line.strip()
+        if not entry:
+            continue
+        if _CONTROL_CHARACTERS.search(entry):
+            raise IsolationError(
+                f"'changed-files' line {number} contains a control character; "
+                "supply one repository-relative path per line"
+            )
+        entries.append(entry)
+    return entries
 
 
 def build_spec(patterns: Sequence[str]) -> PathSpec[Any]:
@@ -97,6 +125,7 @@ def classify(changed_files: Sequence[str], spec: PathSpec[Any]) -> Result:
     return Result(
         triggered=triggered,
         isolated=isolated,
+        changed=list(changed_files),
         matched=matched,
         violating=violating if triggered else [],
     )
@@ -193,6 +222,9 @@ def write_outputs(result: Result) -> None:
         f"violating-files<<{delimiter}\n",
         ("\n".join(result.violating) + "\n") if result.violating else "",
         f"{delimiter}\n",
+        f"changed-files<<{delimiter}\n",
+        ("\n".join(result.changed) + "\n") if result.changed else "",
+        f"{delimiter}\n",
     ]
     _append_to_env_file("GITHUB_OUTPUT", "".join(lines))
 
@@ -224,8 +256,12 @@ def _code_span(value: str) -> str:
     return f"{fence}{pad}{value}{pad}{fence}"
 
 
-def render_summary(result: Result, patterns: Sequence[str]) -> str:
-    """Build a human-readable markdown summary block."""
+def render_summary(result: Result, patterns: Sequence[str], *, source: str = "") -> str:
+    """Build a human-readable markdown summary block.
+
+    ``source`` is a markdown fragment naming where the changed file list
+    came from; the row is omitted when it is empty.
+    """
     if not result.isolated:
         status = "❌ Not isolated"
     elif result.triggered:
@@ -243,6 +279,7 @@ def render_summary(result: Result, patterns: Sequence[str]) -> str:
         "| Property | Value |",
         "| --- | --- |",
         f"| In-scope patterns | {patterns_cell} |",
+        *([f"| Changed files source | {source} |"] if source else []),
         f"| In-scope files changed | {len(result.matched)} |",
         f"| Out-of-scope files changed | {len(result.violating)} |",
         f"| Triggered | {str(result.triggered).lower()} |",
@@ -256,7 +293,13 @@ def render_summary(result: Result, patterns: Sequence[str]) -> str:
     return "\n".join(rows) + "\n"
 
 
-def emit(result: Result, patterns: Sequence[str], *, fail_on_violation: bool) -> int:
+def emit(
+    result: Result,
+    patterns: Sequence[str],
+    *,
+    fail_on_violation: bool,
+    source: str = "",
+) -> int:
     """Write console output, summary, annotations and return an exit code."""
     print("🔒 Change Isolation check")
     print(f"  Patterns ({len(patterns)}):")
@@ -266,7 +309,9 @@ def emit(result: Result, patterns: Sequence[str], *, fail_on_violation: bool) ->
     for path in result.matched:
         print(f"    + {path}")
 
-    _append_to_env_file("GITHUB_STEP_SUMMARY", render_summary(result, patterns))
+    _append_to_env_file(
+        "GITHUB_STEP_SUMMARY", render_summary(result, patterns, source=source)
+    )
     write_outputs(result)
 
     if result.isolated:
@@ -310,14 +355,23 @@ def main() -> int:
         return 1
 
     try:
-        changed_files = get_changed_files(base_ref)
+        # A non-empty list replaces git entirely: no work tree is needed and
+        # base-ref is ignored. A blank input cannot be told apart from an
+        # absent one, so it falls back to git.
+        changed_files = parse_changed_files(os.environ.get("INPUT_CHANGED_FILES", ""))
+        if changed_files:
+            print("Using the 'changed-files' input; 'base-ref' is unused")
+            source = "`changed-files` input (`base-ref` unused)"
+        else:
+            changed_files = get_changed_files(base_ref)
+            source = f"`git diff` against {_code_span(_escape_table_cell(base_ref))}"
     except IsolationError as exc:
         print(f"::error::{_escape_data(str(exc))}")
         return 1
 
     spec = build_spec(patterns)
     result = classify(changed_files, spec)
-    return emit(result, patterns, fail_on_violation=fail_on_violation)
+    return emit(result, patterns, fail_on_violation=fail_on_violation, source=source)
 
 
 if __name__ == "__main__":
