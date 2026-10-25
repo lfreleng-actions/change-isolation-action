@@ -25,6 +25,18 @@ combined with anything else, or that CI/CD changes under `.github/` are
 ring-fenced from code changes. Running the action twice with different `paths`
 makes those two scopes mutually exclusive.
 
+## Requirements
+
+The action runs on the runner's own `python3` with the standard library
+alone. It installs nothing and needs no network access, so a job that runs
+it can block all outbound traffic, for example with `harden-runner` in block
+mode and an empty allow-list.
+
+It needs Python 3.10 or newer on `PATH` as `python3`. GitHub-hosted Linux
+and macOS runners provide one; on a self-hosted runner or container without
+it, add `actions/setup-python` before this action. With no `python3`, or an
+older one, the step fails with an error naming the version it needs.
+
 ## Usage Example
 
 <!-- markdownlint-disable MD046 -->
@@ -133,15 +145,16 @@ a lone backslash, fails the step with an error naming it.
 
 ## Implementation Details
 
-The matching logic lives in `change_isolation.py` (a standalone
-[PEP 723](https://peps.python.org/pep-0723/) script run with
-`uv run --locked --script`, pinned by the committed
-`change_isolation.py.lock` for reproducible, hash-verified
-dependencies). Pure functions handle pattern matching, and a `pytest`
-suite exercises them; a thin `main()` reads the `INPUT_*` environment
-variables, takes the changed file list from the `changed-files` input or
-from a `git diff` against the base ref, and writes outputs, a
-`$GITHUB_STEP_SUMMARY` block and `::error::`/`::warning::` annotations.
+The action runs `change_isolation.py` with `python3 -I` from the
+workspace. The script has no third-party dependencies: the
+`gitignore_matcher` package beside it compiles the patterns with the
+standard library `re` module. Pure functions handle pattern matching, and
+a `pytest` suite exercises them, comparing the matcher with `pathspec`,
+a development dependency, on a fixed set of cases and a generated one.
+A thin `main()` reads the `INPUT_*` environment variables, takes the
+changed file list from the `changed-files` input or from a `git diff`
+against the base ref, and writes outputs, a `$GITHUB_STEP_SUMMARY` block
+and `::error::`/`::warning::` annotations.
 
 A shallow checkout that lacks the base commit fails with an actionable message
 rather than producing a misleading result; supply a deeper `fetch-depth`

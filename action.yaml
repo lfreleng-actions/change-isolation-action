@@ -70,11 +70,6 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - name: "Install uv"
-      # yamllint disable-line rule:line-length
-      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-      with:
-        version: "0.13.4"
     - name: "Run change isolation check"
       id: check
       shell: bash
@@ -85,7 +80,22 @@ runs:
         INPUT_FAIL_ON_VIOLATION: ${{ inputs.fail-on-violation }}
         ACTION_PATH: ${{ github.action_path }}
       run: |
+        # Run on the runner's own Python with the standard library alone, so
+        # the step needs no network access. Keep the minimum in step with
+        # requires-python in change_isolation.py.
+        if ! command -v python3 > /dev/null 2>&1; then
+          echo "::error::python3 is not on PATH; this action needs" \
+            "Python 3.10 or newer (for example from actions/setup-python)"
+          exit 1
+        fi
+        check='import sys; print("%d.%d.%d" % sys.version_info[:3]);'
+        check+=' sys.exit(sys.version_info < (3, 10))'
+        if ! version="$(python3 -I -c "$check" 2> /dev/null)"; then
+          echo "::error::python3 is ${version:-unusable}; this action" \
+            "needs Python 3.10 or newer (for example from actions/setup-python)"
+          exit 1
+        fi
         # Evaluate isolation against the consumer's checked-out repository
         # (the workspace), running the script from this action's checkout.
         cd "$GITHUB_WORKSPACE"
-        uv run --locked --script "${ACTION_PATH}/change_isolation.py"
+        python3 -I "${ACTION_PATH}/change_isolation.py"
