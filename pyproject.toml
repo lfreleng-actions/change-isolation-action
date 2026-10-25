@@ -8,10 +8,11 @@ description = "Verify a change isolates modifications to a set of paths"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
-dependencies = ["pathspec>=0.12"]
+dependencies = []
 
 [dependency-groups]
-dev = ["pytest>=8"]
+# pathspec backs the differential tests of the standard-library matcher.
+dev = ["pathspec>=1.0", "pytest>=8"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
@@ -31,4 +32,4 @@ pythonPlatform = "All"
 typeCheckingMode = "standard"
 # Matches the targets the pre-commit hook passes, so a bare basedpyright
 # run or an editor's language server analyses the same set.
-include = ["change_isolation.py", "tests"]
+include = ["change_isolation.py", "gitignore_matcher", "tests"]

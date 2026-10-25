@@ -83,15 +83,26 @@ all falls back to git; skip the step in that case.
 
 ## Pattern Semantics
 
-Patterns use gitignore semantics (via
-[`pathspec`](https://pypi.org/project/pathspec/)):
+Patterns use gitignore semantics. The action matches them with the Python
+standard library, and its tests hold the results identical to the
+`gitignore` pattern of [`pathspec`](https://pypi.org/project/pathspec/),
+which earlier releases used:
 
 | Pattern      | Matches                                               |
 | ------------ | ----------------------------------------------------- |
 | `/INFO.yaml` | A top-level `INFO.yaml` (leading `/` anchors to root) |
 | `INFO.yaml`  | An `INFO.yaml` at any depth                           |
 | `.github/**` | Everything beneath the `.github` directory            |
+| `a/**/b`     | `a/b`, `a/x/b`, `a/x/y/b` and so on                   |
+| `*.py`       | Any `.py` file; `*`, `?` and `[...]` stay in one name |
+| `build/`     | Everything beneath any `build` directory              |
 | `!.github/x` | Negation; excludes `.github/x` from the in-scope set  |
+
+When more than one pattern matches a path, the last one wins, so a later
+pattern can re-include a path an earlier `!` pattern excluded. A backslash
+escapes the next character (`\#notes`, `\!bang`), and the action skips
+lines starting with `#`. A pattern it cannot compile, such as one ending in
+a lone backslash, fails the step with an error naming it.
 
 ## Inputs
 
