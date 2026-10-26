@@ -33,16 +33,18 @@ a pull request, not the full set:
 
 ## Repository specifics
 
-The runtime dependencies live in two places, each with its own lock:
-the PEP 723 header of `change_isolation.py`, locked by
-`change_isolation.py.lock`, and `pyproject.toml`, locked by `uv.lock`.
-The action runs `uv run --locked --script`, which reads the script
-lock and ignores `uv.lock`; the unit tests do the reverse. A stale
-script lock passes `uv run --locked pytest` and first fails in the
-integration job. Change both declarations together and refresh both
-locks:
+The action has no runtime dependencies. It runs `change_isolation.py`
+with the runner's own `python3 -I`, so it needs no network access, and
+the script and the `gitignore_matcher` package must use the standard
+library alone. `pathspec` is a development dependency, in
+`pyproject.toml` and `uv.lock`, for the differential tests that hold
+the matcher to its results; never import it from the action's code.
 
-```bash
-uv lock
-uv lock --script change_isolation.py
-```
+The lowest supported Python version appears in three places that must
+agree: the PEP 723 header of `change_isolation.py`, `requires-python`
+in `pyproject.toml`, and the version check in `action.yaml`.
+
+`gitignore_matcher/__init__.py` derives from `pathspec` and stays
+under MPL-2.0, as its header states; the rest of the repository is
+Apache-2.0. Keep that header and its attribution when changing the
+file, and do not copy code from it into Apache-2.0 files.
