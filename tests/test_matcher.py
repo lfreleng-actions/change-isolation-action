@@ -23,6 +23,7 @@ import pytest
 from pathspec import PathSpec
 
 import change_isolation as ci
+import gitignore_matcher
 
 SCRIPT = Path(ci.__file__).resolve()
 
@@ -277,6 +278,62 @@ def test_main_reports_invalid_pattern(tmp_path, monkeypatch, capsys):
     assert ci.main() == 1
     assert "::error::invalid pattern 'src\\'" in capsys.readouterr().out
     assert not (tmp_path / "out").exists()
+
+
+# --------------------------------------------------------------------------
+# Native path separators
+# --------------------------------------------------------------------------
+
+# pathspec normalises the platform's own separators (os.sep and os.altsep,
+# where they differ from '/') to '/' before matching. These tests stand in
+# for Windows by setting the matcher's separators, and compare the result
+# with pathspec given the same separators.
+WINDOWS_SEPARATORS = ("\\",)
+
+SEPARATOR_CASES = [
+    ([".github/**"], ".github\\workflows\\ci.yaml"),
+    ([".github/**"], "README.md"),
+    (["/INFO.yaml"], "\\INFO.yaml"),
+    (["/INFO.yaml"], ".\\INFO.yaml"),
+    (["docs/"], "src\\docs\\index.md"),
+    (["*.py", "!tests/**"], "tests\\test_x.py"),
+    (["a/**/b"], "a\\x\\y\\b"),
+]
+
+
+@pytest.mark.xfail(strict=True, reason="native separators not normalised yet")
+@pytest.mark.parametrize(("patterns", "path"), SEPARATOR_CASES)
+def test_native_separators_match_pathspec(monkeypatch, patterns, path):
+    monkeypatch.setattr(gitignore_matcher, "NATIVE_SEPARATORS", WINDOWS_SEPARATORS)
+    expected = PathSpec.from_lines("gitignore", patterns).match_file(
+        path, separators=WINDOWS_SEPARATORS
+    )
+    assert ci.GitIgnoreMatcher.from_lines(patterns).match_file(path) is expected
+
+
+@pytest.mark.xfail(strict=True, reason="native separators not normalised yet")
+def test_native_separators_cannot_hide_a_mixed_change(monkeypatch):
+    # The reported case: a Windows-style in-scope path beside an
+    # out-of-scope one must not pass as an untriggered, isolated change.
+    monkeypatch.setattr(gitignore_matcher, "NATIVE_SEPARATORS", WINDOWS_SEPARATORS)
+    spec = ci.build_spec([".github/**"])
+    result = ci.classify([".github\\workflows\\ci.yaml", "README.md"], spec)
+    assert result.triggered is True
+    assert result.isolated is False
+    assert result.violating == ["README.md"]
+
+
+@pytest.mark.skipif(os.sep != "/" or bool(os.altsep), reason="POSIX only")
+def test_backslash_stays_literal_on_posix():
+    # Where '/' is the only separator, pathspec leaves a backslash alone,
+    # so a path containing one names a single, oddly named file.
+    patterns = [".github/**"]
+    path = ".github\\workflows\\ci.yaml"
+    expected = PathSpec.from_lines("gitignore", patterns).match_file(
+        path, separators=()
+    )
+    assert expected is False
+    assert ci.GitIgnoreMatcher.from_lines(patterns).match_file(path) is expected
 
 
 # --------------------------------------------------------------------------
