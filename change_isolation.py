@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["pathspec>=0.12"]
+# dependencies = []
 # ///
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 The Linux Foundation
@@ -15,14 +15,18 @@ file matches the in-scope patterns, then *every* changed file matches them.
 If no changed file matches the patterns the check does not trigger and
 passes as a no-op.
 
-Pattern matching uses gitignore semantics (via ``pathspec``):
+Pattern matching uses gitignore semantics, implemented with the standard
+library alone and kept identical to ``pathspec``'s ``gitignore`` pattern:
 
 * A leading ``/`` anchors the pattern to the repository root, so
   ``/INFO.yaml`` matches only a top-level ``INFO.yaml``.
 * A bare name such as ``INFO.yaml`` matches at any depth.
 * ``**`` matches across directories, so ``.github/**`` matches everything
   beneath the ``.github`` directory.
-* ``!`` negation is supported for advanced exclusions.
+* ``*``, ``?`` and ``[...]`` classes match within one path segment.
+* A trailing ``/`` matches everything beneath a directory.
+* ``!`` negation is supported, and the last matching pattern wins.
+* A backslash escapes the next character; ``#`` lines are comments.
 
 Inputs are read from ``INPUT_*`` environment variables (the GitHub Actions
 convention) and results are written to the console, ``GITHUB_OUTPUT``,
@@ -38,9 +42,13 @@ import subprocess  # nosec B404 - git invocation with fixed, non-shell argv
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
 
-from pathspec import PathSpec
+# The action runs this script with 'python3 -I', which leaves the script's
+# own directory off sys.path. Put it first, as a plain 'python3' would, so
+# the sibling package imports ahead of any installed namesake.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from gitignore_matcher import GitIgnoreMatcher, PatternError
 
 DEFAULT_BASE_REF = "HEAD~1"
 
@@ -70,7 +78,7 @@ def parse_patterns(raw: str) -> list[str]:
     Blank lines are dropped and surrounding whitespace is trimmed from each
     line, which suits patterns authored in a YAML block scalar. Gitignore's
     significant trailing-whitespace handling is therefore not honoured;
-    comment (``#``) and negation (``!``) handling is left to ``pathspec``.
+    comment (``#``) and negation (``!``) handling is left to the matcher.
     """
     return [line.strip() for line in raw.splitlines() if line.strip()]
 
@@ -97,20 +105,15 @@ def parse_changed_files(raw: str) -> list[str]:
     return entries
 
 
-def build_spec(patterns: Sequence[str]) -> PathSpec[Any]:
-    """Compile gitignore-style patterns into a matcher.
-
-    Prefer the modern ``gitignore`` factory and fall back to the older
-    ``gitwildmatch`` name so the action works across the supported pathspec
-    range without emitting deprecation warnings on newer releases.
-    """
+def build_spec(patterns: Sequence[str]) -> GitIgnoreMatcher:
+    """Compile gitignore-style patterns into a matcher."""
     try:
-        return PathSpec.from_lines("gitignore", patterns)
-    except (KeyError, LookupError):
-        return PathSpec.from_lines("gitwildmatch", patterns)
+        return GitIgnoreMatcher.from_lines(patterns)
+    except PatternError as exc:
+        raise IsolationError(str(exc)) from exc
 
 
-def classify(changed_files: Sequence[str], spec: PathSpec[Any]) -> Result:
+def classify(changed_files: Sequence[str], spec: GitIgnoreMatcher) -> Result:
     """Partition changed files into in-scope and out-of-scope sets.
 
     The change is isolated when nothing in scope changed (no-op) or when
@@ -355,6 +358,7 @@ def main() -> int:
         return 1
 
     try:
+        spec = build_spec(patterns)
         # A non-empty list replaces git entirely: no work tree is needed and
         # base-ref is ignored. A blank input cannot be told apart from an
         # absent one, so it falls back to git.
@@ -369,7 +373,6 @@ def main() -> int:
         print(f"::error::{_escape_data(str(exc))}")
         return 1
 
-    spec = build_spec(patterns)
     result = classify(changed_files, spec)
     return emit(result, patterns, fail_on_violation=fail_on_violation, source=source)
 

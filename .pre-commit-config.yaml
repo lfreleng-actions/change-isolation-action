@@ -128,7 +128,7 @@ repos:
     hooks:
       - id: basedpyright
         # Fail on warnings too; same targets as [tool.basedpyright] include.
-        args: [--warnings, change_isolation.py, tests]
+        args: [--warnings, change_isolation.py, gitignore_matcher, tests]
         # Scan the targets whole, not only the staged files.
         pass_filenames: false
         # Run even when no Python is staged: deletions and config changes.
