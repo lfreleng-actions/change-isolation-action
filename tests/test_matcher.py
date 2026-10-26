@@ -301,7 +301,6 @@ SEPARATOR_CASES = [
 ]
 
 
-@pytest.mark.xfail(strict=True, reason="native separators not normalised yet")
 @pytest.mark.parametrize(("patterns", "path"), SEPARATOR_CASES)
 def test_native_separators_match_pathspec(monkeypatch, patterns, path):
     monkeypatch.setattr(gitignore_matcher, "NATIVE_SEPARATORS", WINDOWS_SEPARATORS)
@@ -311,7 +310,6 @@ def test_native_separators_match_pathspec(monkeypatch, patterns, path):
     assert ci.GitIgnoreMatcher.from_lines(patterns).match_file(path) is expected
 
 
-@pytest.mark.xfail(strict=True, reason="native separators not normalised yet")
 def test_native_separators_cannot_hide_a_mixed_change(monkeypatch):
     # The reported case: a Windows-style in-scope path beside an
     # out-of-scope one must not pass as an untriggered, isolated change.

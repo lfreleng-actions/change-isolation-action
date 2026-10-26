@@ -28,6 +28,7 @@ identical to it so the action needs no third-party package at runtime:
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Iterable, Sequence
 
@@ -35,6 +36,13 @@ from collections.abc import Iterable, Sequence
 class PatternError(ValueError):
     """Raised when a ``paths`` pattern cannot be compiled."""
 
+
+# The platform's own path separators other than '/', converted to '/'
+# before matching, as pathspec does. Empty where '/' is the only one, so
+# a backslash there stays a literal character of the file name.
+NATIVE_SEPARATORS: tuple[str, ...] = tuple(
+    sep for sep in (os.sep, os.altsep) if sep and sep != "/"
+)
 
 # Wildcards that never match a slash, as regular expressions.
 _WILDCARDS = {"*": "[^/]*", "?": "[^/]"}
@@ -176,7 +184,9 @@ def compile_pattern(pattern: str) -> tuple[re.Pattern[str], bool] | None:
 
 
 def _normalise_path(path: str) -> str:
-    """Drop one leading ``/`` or ``./`` so the path is root-relative."""
+    """Use ``/`` separators, then drop one leading ``/`` or ``./``."""
+    for sep in NATIVE_SEPARATORS:
+        path = path.replace(sep, "/")
     if path.startswith("/"):
         return path[1:]
     if path.startswith("./"):
