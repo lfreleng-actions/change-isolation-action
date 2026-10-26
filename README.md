@@ -160,6 +160,16 @@ A shallow checkout that lacks the base commit fails with an actionable message
 rather than producing a misleading result; supply a deeper `fetch-depth`
 (`2` is enough for a single-commit Gerrit change) or an explicit `base-ref`.
 
+## Licensing
+
+Apache-2.0 covers the action, with one exception.
+`gitignore_matcher/__init__.py` derives from the `gitignore` pattern of
+[`pathspec`](https://github.com/cpburnz/python-pathspec) 1.1.1, by
+Caleb P. Burns, which carries the Mozilla Public License 2.0. That file
+keeps MPL-2.0, as its header states, and `LICENSES/MPL-2.0.txt` holds
+the licence text. MPL-2.0 applies file by file, so it does not extend to
+the rest of the action.
+
 ## Notes
 
 This action is primarily consumed by the Linux Foundation reusable workflows

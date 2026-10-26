@@ -1,5 +1,15 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MPL-2.0
+# SPDX-FileCopyrightText: 2013-2026 Caleb P. Burns
 # SPDX-FileCopyrightText: 2026 The Linux Foundation
+#
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+#
+# Derived from pathspec 1.1.1 (pathspec/patterns/gitignore/basic.py,
+# GitIgnoreBasicPattern), https://github.com/cpburnz/python-pathspec,
+# which is licensed under MPL-2.0. This file alone carries that
+# licence; the rest of the action remains Apache-2.0.
 
 """Match repository paths against gitignore-style patterns.
 
