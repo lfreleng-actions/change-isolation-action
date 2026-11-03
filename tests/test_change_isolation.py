@@ -406,6 +406,7 @@ def _forbid_git(monkeypatch):
         raise AssertionError(f"git must not run with changed-files set: {args}")
 
     monkeypatch.setattr(ci, "_run_git", fail)
+    monkeypatch.setattr(ci, "_run_git_bytes", fail)
 
 
 def _output_value(path: Path, name: str) -> str:
@@ -482,10 +483,6 @@ def test_main_blank_changed_files_falls_back_to_git(repo, monkeypatch, tmp_path)
 # git diff paths that Git quotes under core.quotePath
 # --------------------------------------------------------------------------
 
-_QUOTED_PATH_FIX = pytest.mark.xfail(
-    strict=True, reason="git diff output is not read NUL-delimited yet"
-)
-
 
 def _commit_files(repo: Path, *names: str | bytes) -> None:
     """Create each named file and commit them as one change."""
@@ -526,7 +523,6 @@ def test_main_plain_path_in_scope(repo, monkeypatch, tmp_path):
     assert _scalar_output(out, "isolated") == "true"
 
 
-@_QUOTED_PATH_FIX
 @pytest.mark.parametrize(
     "name",
     ["docs/café.md", 'docs/say "hi".md', "docs/back\\slash.md"],
@@ -541,7 +537,6 @@ def test_main_quoted_path_in_scope(repo, monkeypatch, tmp_path, name):
     assert _output_value(out, "changed-files") == f"{name}\n"
 
 
-@_QUOTED_PATH_FIX
 def test_main_quoted_path_mixed_with_plain_is_isolated(repo, monkeypatch, tmp_path):
     _commit_files(repo, "docs/plain.md", "docs/café.md")
     assert _run_main(repo, monkeypatch, tmp_path, "docs/**") == 0
@@ -551,7 +546,6 @@ def test_main_quoted_path_mixed_with_plain_is_isolated(repo, monkeypatch, tmp_pa
     assert _output_value(out, "violating-files") == ""
 
 
-@_QUOTED_PATH_FIX
 def test_main_reports_real_path_for_violation(repo, monkeypatch, tmp_path, capsys):
     _commit_files(repo, "docs/plain.md", "src/café.py")
     assert _run_main(repo, monkeypatch, tmp_path, "docs/**") == 1
@@ -563,7 +557,6 @@ def test_main_reports_real_path_for_violation(repo, monkeypatch, tmp_path, capsy
     assert "\\303" not in captured
 
 
-@_QUOTED_PATH_FIX
 @pytest.mark.parametrize(
     "name", ["docs/tab\there.md", "docs/new\nline.md"], ids=["tab", "newline"]
 )
@@ -580,7 +573,6 @@ def test_main_refuses_control_characters_from_git(
     assert "'changed-files'" not in captured
 
 
-@_QUOTED_PATH_FIX
 @pytest.mark.skipif(
     not sys.platform.startswith("linux"),
     reason="needs a file system that accepts non-UTF-8 file names",

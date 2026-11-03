@@ -144,6 +144,39 @@ def _run_git(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _run_git_bytes(args: Sequence[str]) -> subprocess.CompletedProcess[bytes]:
+    """Run a git command, capturing raw output bytes, without using a shell."""
+    return subprocess.run(  # nosec B603 - fixed argv, no shell, trusted binary
+        ["git", *args],
+        capture_output=True,
+        check=False,
+    )
+
+
+def _decode_git_path(raw: bytes) -> str:
+    """Decode one NUL-delimited path from git output, refusing unsafe ones.
+
+    Outputs are newline-separated and annotations are workflow commands, so
+    a path holding a control character cannot be reported faithfully; one
+    that is not UTF-8 cannot be matched or reported at all. Both stop the
+    check rather than being skipped, which would hide a change from it.
+    """
+    try:
+        path = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        shown = raw.decode("utf-8", errors="backslashreplace")
+        raise IsolationError(
+            f"git reported a changed path that is not valid UTF-8: {shown!r}. "
+            "Rename the file to a valid UTF-8 name."
+        ) from exc
+    if _CONTROL_CHARACTERS.search(path):
+        raise IsolationError(
+            f"git reported a changed path containing a control character: "
+            f"{path!r}. Rename the file to remove the control character."
+        )
+    return path
+
+
 def validate_base_ref(base_ref: str) -> None:
     """Ensure the base reference resolves to a commit in local history.
 
@@ -174,15 +207,19 @@ def get_changed_files(base_ref: str) -> list[str]:
     Uses a three-dot (merge-base) diff so that, when ``base-ref`` is a branch
     that advanced after the change branched off, only the files the change
     itself introduces are considered. ``--no-renames`` keeps isolation strict
-    by surfacing a rename as both its old and new path.
+    by surfacing a rename as both its old and new path. ``-z`` makes git
+    emit each path verbatim and NUL-terminated. Without it, git C-style
+    quotes any path holding ``"``, ``\\`` or a control character, and with
+    the default ``core.quotePath`` any non-ASCII path too.
     """
     validate_base_ref(base_ref)
-    completed = _run_git(["diff", "--name-only", "--no-renames", f"{base_ref}...HEAD"])
+    completed = _run_git_bytes(
+        ["diff", "-z", "--name-only", "--no-renames", f"{base_ref}...HEAD"]
+    )
     if completed.returncode != 0:
-        raise IsolationError(
-            f"git diff against base-ref '{base_ref}' failed: {completed.stderr.strip()}"
-        )
-    return [line for line in completed.stdout.splitlines() if line]
+        stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+        raise IsolationError(f"git diff against base-ref '{base_ref}' failed: {stderr}")
+    return [_decode_git_path(raw) for raw in completed.stdout.split(b"\0") if raw]
 
 
 def _as_bool(value: str, *, default: bool) -> bool:
