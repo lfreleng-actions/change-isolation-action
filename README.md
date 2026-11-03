@@ -160,6 +160,12 @@ A shallow checkout that lacks the base commit fails with an actionable message
 rather than producing a misleading result; supply a deeper `fetch-depth`
 (`2` is enough for a single-commit Gerrit change) or an explicit `base-ref`.
 
+The action reads the `git diff` list NUL-delimited, so outputs and
+annotations carry real paths, never the quoted form Git prints for names
+with non-ASCII characters, quotes or backslashes. A Git-derived path that
+contains a control character, or that is not valid UTF-8, fails the step:
+the newline-separated outputs cannot carry it intact.
+
 ## Licensing
 
 Apache-2.0 covers the action, with one exception.

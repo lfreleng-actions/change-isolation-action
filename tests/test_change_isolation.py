@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -404,6 +406,7 @@ def _forbid_git(monkeypatch):
         raise AssertionError(f"git must not run with changed-files set: {args}")
 
     monkeypatch.setattr(ci, "_run_git", fail)
+    monkeypatch.setattr(ci, "_run_git_bytes", fail)
 
 
 def _output_value(path: Path, name: str) -> str:
@@ -474,3 +477,112 @@ def test_main_blank_changed_files_falls_back_to_git(repo, monkeypatch, tmp_path)
     assert ci.main() == 0
     # Emitted from git on the no-op path too.
     assert _output_value(out, "changed-files") == "INFO.yaml\n"
+
+
+# --------------------------------------------------------------------------
+# git diff paths that Git quotes under core.quotePath
+# --------------------------------------------------------------------------
+
+
+def _commit_files(repo: Path, *names: str | bytes) -> None:
+    """Create each named file and commit them as one change."""
+    root = os.fsencode(repo)
+    for name in names:
+        raw = os.fsencode(name)
+        target = os.path.join(root, raw)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "wb") as handle:
+            handle.write(b"x\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "change")
+
+
+def _run_main(repo: Path, monkeypatch, tmp_path: Path, paths: str) -> int:
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "out"))
+    monkeypatch.setenv("INPUT_PATHS", paths)
+    monkeypatch.delenv("INPUT_BASE_REF", raising=False)
+    monkeypatch.delenv("INPUT_CHANGED_FILES", raising=False)
+    monkeypatch.delenv("INPUT_FAIL_ON_VIOLATION", raising=False)
+    return ci.main()
+
+
+def _scalar_output(path: Path, name: str) -> str:
+    match = re.search(
+        rf"^{re.escape(name)}=(.*)$", path.read_text(encoding="utf-8"), re.MULTILINE
+    )
+    assert match is not None, f"output {name!r} missing"
+    return match.group(1)
+
+
+def test_main_plain_path_in_scope(repo, monkeypatch, tmp_path):
+    _commit_files(repo, "docs/plain.md")
+    assert _run_main(repo, monkeypatch, tmp_path, "docs/**") == 0
+    out = tmp_path / "out"
+    assert _scalar_output(out, "triggered") == "true"
+    assert _scalar_output(out, "isolated") == "true"
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["docs/café.md", 'docs/say "hi".md', "docs/back\\slash.md"],
+    ids=["non-ascii", "double-quote", "backslash"],
+)
+def test_main_quoted_path_in_scope(repo, monkeypatch, tmp_path, name):
+    _commit_files(repo, name)
+    assert _run_main(repo, monkeypatch, tmp_path, "docs/**") == 0
+    out = tmp_path / "out"
+    assert _scalar_output(out, "triggered") == "true"
+    assert _scalar_output(out, "isolated") == "true"
+    assert _output_value(out, "changed-files") == f"{name}\n"
+
+
+def test_main_quoted_path_mixed_with_plain_is_isolated(repo, monkeypatch, tmp_path):
+    _commit_files(repo, "docs/plain.md", "docs/café.md")
+    assert _run_main(repo, monkeypatch, tmp_path, "docs/**") == 0
+    out = tmp_path / "out"
+    assert _scalar_output(out, "isolated") == "true"
+    assert _output_value(out, "changed-files") == "docs/café.md\ndocs/plain.md\n"
+    assert _output_value(out, "violating-files") == ""
+
+
+def test_main_reports_real_path_for_violation(repo, monkeypatch, tmp_path, capsys):
+    _commit_files(repo, "docs/plain.md", "src/café.py")
+    assert _run_main(repo, monkeypatch, tmp_path, "docs/**") == 1
+    out = tmp_path / "out"
+    assert _output_value(out, "violating-files") == "src/café.py\n"
+    assert _output_value(out, "changed-files") == "docs/plain.md\nsrc/café.py\n"
+    captured = capsys.readouterr().out
+    assert "::error file=src/café.py::" in captured
+    assert "\\303" not in captured
+
+
+@pytest.mark.parametrize(
+    "name", ["docs/tab\there.md", "docs/new\nline.md"], ids=["tab", "newline"]
+)
+def test_main_refuses_control_characters_from_git(
+    repo, monkeypatch, tmp_path, capsys, name
+):
+    _commit_files(repo, name)
+    assert _run_main(repo, monkeypatch, tmp_path, "docs/**") == 1
+    assert not (tmp_path / "out").exists()
+    captured = capsys.readouterr().out
+    assert "::error::" in captured
+    assert "control character" in captured
+    assert "Rename the file" in captured
+    assert "'changed-files'" not in captured
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="needs a file system that accepts non-UTF-8 file names",
+)
+def test_main_refuses_invalid_utf8_from_git(repo, monkeypatch, tmp_path, capsys):
+    _commit_files(repo, b"docs/bad\xff.md")
+    assert _run_main(repo, monkeypatch, tmp_path, "docs/**") == 1
+    assert not (tmp_path / "out").exists()
+    captured = capsys.readouterr().out
+    assert "::error::" in captured
+    assert "UTF-8" in captured
+    assert "Rename the file" in captured
+    assert "'changed-files'" not in captured
