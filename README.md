@@ -32,10 +32,12 @@ alone. It installs nothing and needs no network access, so a job that runs
 it can block all outbound traffic, for example with `harden-runner` in block
 mode and an empty allow-list.
 
-It needs Python 3.10 or newer on `PATH` as `python3`. GitHub-hosted Linux
-and macOS runners provide one; on a self-hosted runner or container without
-it, add `actions/setup-python` before this action. With no `python3`, or an
-older one, the step fails with an error naming the version it needs.
+It needs Python 3.11 or newer on `PATH` as `python3`. Current GitHub-hosted
+Linux and macOS runners provide one (`ubuntu-24.04` ships 3.12). The system
+`python3` on `ubuntu-22.04` is 3.10, which is too old; there, or on a
+self-hosted runner or container without a recent enough one, add
+`actions/setup-python` before this action. With no `python3`, or an older
+one, the step fails with an error naming the version it needs.
 
 ## Usage Example
 

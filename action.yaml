@@ -85,14 +85,14 @@ runs:
         # requires-python in change_isolation.py.
         if ! command -v python3 > /dev/null 2>&1; then
           echo "::error::python3 is not on PATH; this action needs" \
-            "Python 3.10 or newer (for example from actions/setup-python)"
+            "Python 3.11 or newer (for example from actions/setup-python)"
           exit 1
         fi
         check='import sys; print("%d.%d.%d" % sys.version_info[:3]);'
-        check+=' sys.exit(sys.version_info < (3, 10))'
+        check+=' sys.exit(sys.version_info < (3, 11))'
         if ! version="$(python3 -I -c "$check" 2> /dev/null)"; then
           echo "::error::python3 is ${version:-unusable}; this action" \
-            "needs Python 3.10 or newer (for example from actions/setup-python)"
+            "needs Python 3.11 or newer (for example from actions/setup-python)"
           exit 1
         fi
         # Evaluate isolation against the consumer's checked-out repository
