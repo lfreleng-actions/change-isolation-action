@@ -70,6 +70,18 @@ outputs:
 runs:
   using: "composite"
   steps:
+    # Resolve the interpreter here rather than take python3 from the
+    # caller's PATH. An explicit python-version keeps setup-python from
+    # reading a version file in the workspace, and update-environment
+    # false leaves the caller's PATH and Python variables untouched.
+    - name: "Set up Python"
+      id: setup-python
+      # yamllint disable-line rule:line-length
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+      with:
+        python-version: "3.x"
+        update-environment: false
+
     - name: "Run change isolation check"
       id: check
       shell: bash
@@ -79,23 +91,19 @@ runs:
         INPUT_CHANGED_FILES: ${{ inputs.changed-files }}
         INPUT_FAIL_ON_VIOLATION: ${{ inputs.fail-on-violation }}
         ACTION_PATH: ${{ github.action_path }}
+        PYTHON: ${{ steps.setup-python.outputs.python-path }}
       run: |
-        # Run on the runner's own Python with the standard library alone, so
-        # the step needs no network access. Keep the minimum in step with
-        # requires-python in change_isolation.py.
-        if ! command -v python3 > /dev/null 2>&1; then
-          echo "::error::python3 is not on PATH; this action needs" \
-            "Python 3.11 or newer (for example from actions/setup-python)"
-          exit 1
-        fi
+        # Run the interpreter setup-python resolved, with the standard
+        # library alone. Keep the minimum in step with requires-python in
+        # change_isolation.py.
         check='import sys; print("%d.%d.%d" % sys.version_info[:3]);'
         check+=' sys.exit(sys.version_info < (3, 11))'
-        if ! version="$(python3 -I -c "$check" 2> /dev/null)"; then
-          echo "::error::python3 is ${version:-unusable}; this action" \
-            "needs Python 3.11 or newer (for example from actions/setup-python)"
+        if ! version="$("$PYTHON" -I -c "$check" 2> /dev/null)"; then
+          echo "::error::Python is ${version:-unusable}; this action" \
+            "needs Python 3.11 or newer"
           exit 1
         fi
         # Evaluate isolation against the consumer's checked-out repository
         # (the workspace), running the script from this action's checkout.
         cd "$GITHUB_WORKSPACE"
-        python3 -I "${ACTION_PATH}/change_isolation.py"
+        "$PYTHON" -I "${ACTION_PATH}/change_isolation.py"
