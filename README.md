@@ -27,17 +27,20 @@ makes those two scopes mutually exclusive.
 
 ## Requirements
 
-The action runs on the runner's own `python3` with the standard library
-alone. It installs nothing and needs no network access, so a job that runs
-it can block all outbound traffic, for example with `harden-runner` in block
-mode and an empty allow-list.
+The action runs its script with the standard library alone and installs
+no packages. A pinned `actions/setup-python` step inside the action picks
+the newest Python 3 in the runner's tool cache and the action starts that
+interpreter by its full path, so the caller's `PATH` cannot choose it. The
+step sets `update-environment: false`, so it leaves the caller's `PATH` and
+Python variables as they were.
 
-It needs Python 3.11 or newer on `PATH` as `python3`. Current GitHub-hosted
-Linux and macOS runners provide one (`ubuntu-24.04` ships 3.12). The system
-`python3` on `ubuntu-22.04` is 3.10, which is too old; there, or on a
-self-hosted runner or container without a recent enough one, add
-`actions/setup-python` before this action. With no `python3`, or an older
-one, the step fails with an error naming the version it needs.
+It needs Python 3.11 or newer. On GitHub-hosted runners the tool cache
+already holds one, so `actions/setup-python` downloads nothing and a job
+that runs the action can block all outbound traffic, for example with
+`harden-runner` in block mode and an empty allow-list. On a self-hosted
+runner or container whose tool cache lacks Python 3, `actions/setup-python`
+downloads one, which needs network access. With an older Python, the step
+fails with an error naming the version it needs.
 
 ## Usage Example
 
@@ -147,8 +150,9 @@ a lone backslash, fails the step with an error naming it.
 
 ## Implementation Details
 
-The action runs `change_isolation.py` with `python3 -I` from the
-workspace. The script has no third-party dependencies: the
+The action runs `change_isolation.py` with `-I` on the interpreter
+`actions/setup-python` resolved, from the workspace. The script has no
+third-party dependencies: the
 `gitignore_matcher` package beside it compiles the patterns with the
 standard library `re` module. Pure functions handle pattern matching, and
 a `pytest` suite exercises them, comparing the matcher with `pathspec`,
