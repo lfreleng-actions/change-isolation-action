@@ -73,13 +73,16 @@ runs:
     # Resolve the interpreter here rather than take python3 from the
     # caller's PATH. An explicit python-version keeps setup-python from
     # reading a version file in the workspace, and update-environment
-    # false leaves the caller's PATH and Python variables untouched.
+    # false leaves the caller's PATH and Python variables untouched. The
+    # range matches the floor the run step enforces, so setup-python
+    # never selects an interpreter the action would then reject; keep
+    # it in step with requires-python in change_isolation.py.
     - name: "Set up Python"
       id: setup-python
       # yamllint disable-line rule:line-length
       uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
       with:
-        python-version: "3.x"
+        python-version: ">=3.11"
         update-environment: false
 
     - name: "Run change isolation check"
@@ -94,7 +97,8 @@ runs:
         PYTHON: ${{ steps.setup-python.outputs.python-path }}
       run: |
         # Run the interpreter setup-python resolved, with the standard
-        # library alone. Keep the minimum in step with requires-python in
+        # library alone. This check backs up the python-version range
+        # above; keep both in step with requires-python in
         # change_isolation.py.
         check='import sys; print("%d.%d.%d" % sys.version_info[:3]);'
         check+=' sys.exit(sys.version_info < (3, 11))'
