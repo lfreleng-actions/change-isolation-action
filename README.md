@@ -28,19 +28,22 @@ makes those two scopes mutually exclusive.
 ## Requirements
 
 The action runs its script with the standard library alone and installs
-no packages. A pinned `actions/setup-python` step inside the action picks
-the newest Python 3 in the runner's tool cache and the action starts that
-interpreter by its full path, so the caller's `PATH` cannot choose it. The
-step sets `update-environment: false`, so it leaves the caller's `PATH` and
-Python variables as they were.
+no packages. A pinned `actions/setup-python` step inside the action asks
+for `python-version: ">=3.11"`, picks the newest matching Python in the
+runner's tool cache, and the action starts that interpreter by its full
+path, so the caller's `PATH` cannot choose it. The step sets
+`update-environment: false`, so it leaves the caller's `PATH` and Python
+variables as they were.
 
 It needs Python 3.11 or newer. On GitHub-hosted runners the tool cache
 already holds one, so `actions/setup-python` downloads nothing and a job
 that runs the action can block all outbound traffic, for example with
 `harden-runner` in block mode and an empty allow-list. On a self-hosted
-runner or container whose tool cache lacks Python 3, `actions/setup-python`
-downloads one, which needs network access. With an older Python, the step
-fails with an error naming the version it needs.
+runner or container whose tool cache lacks Python 3.11 or newer,
+`actions/setup-python` downloads one, which needs network access to GitHub
+and its release downloads. Should the resolved interpreter still report
+an older version, the action fails with an error naming the version it
+needs.
 
 ## Usage Example
 
